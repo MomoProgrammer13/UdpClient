@@ -8,6 +8,9 @@ import (
 	"log"
 	"net"
 	"os"
+	"regexp"
+	"sort"
+	"strconv"
 	"sync"
 )
 
@@ -45,28 +48,55 @@ func main() {
 		log.Fatal(err)
 	}
 
-	defer conn.Close()
-
 	_, err = conn.Write(request)
-	response, err := bufio.NewReaderSize(conn, 1024).ReadBytes()
+
+	response, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(string(response))
-	//data := make(chan byte)
-	//done := make(chan bool)
-	//wg := sync.WaitGroup{}
-	//var finish bool = false
 
-	//for !finish {
-	//	received := make([]byte, 1024)
-	//	_, _, err = conn.ReadFromUDP(received)
-	//	if err != nil {
-	//		log.Fatal(err)
-	//	}
-	//	wg.Add(1)
-	//	go handleIncomingResponse(received, data, &wg, &finish)
-	//}
+	//Make a regex to only get numeric values and save to variable
+	re := regexp.MustCompile(`\d+`)
+	numericValues := re.FindAllString(response, -1)
+
+	// Print the numeric values
+
+	tamanho, err := strconv.Atoi(numericValues[0])
+	if err != nil {
+		log.Fatal(err)
+	}
+	var dados = struct {
+		sync.RWMutex
+		m map[int][]byte
+	}{m: make(map[int][]byte)}
+
+	fmt.Println(tamanho)
+	wg := sync.WaitGroup{}
+
+	for i := 0; i < tamanho; i++ {
+		fmt.Println("Valor de i: ", i)
+		received := make([]byte, 1024)
+		_, _, err = conn.ReadFromUDP(received)
+		if err != nil {
+			log.Fatal(err)
+		}
+		wg.Add(1)
+		go handleIncomingResponse(received, &wg, &dados)
+	}
+
+	wg.Wait()
+
+	dados.RLock()
+	fmt.Println("Printando o map de dados")
+	keys := make([]int, 0, len(dados.m))
+	for k := range dados.m {
+		keys = append(keys, k)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(keys)))
+	for _, i := range keys {
+		fmt.Print(string(dados.m[i]))
+	}
+	dados.RUnlock()
 	//if len(received) > 0 {
 	//	errorDec := dec.Decode(&q)
 	//	if errorDec != nil {
@@ -109,25 +139,22 @@ func AppendFile() {
 	fmt.Printf("\nFile Name: %s", file.Name())
 }
 
-func handleIncomingResponse(buffer []byte, data chan byte, wg *sync.WaitGroup, finish *bool) {
+func handleIncomingResponse(buffer []byte, wg *sync.WaitGroup, dados *struct {
+	sync.RWMutex
+	m map[int][]byte
+}) {
+	defer wg.Done()
 	dec := gob.NewDecoder(bytes.NewReader(buffer))
 	var q MetaData
 	errorDec := dec.Decode(&q)
 	if errorDec != nil {
 		log.Fatal(errorDec)
 	}
-	fmt.Printf("Received: %v FileName: %v - Part: %d\n  Data = %v\n", q, q.Name, q.Reps, q.Data)
+	fmt.Printf("FileName: %v - Part: %d\n  Data = %v\n", q, q.Name, q.Reps, q.Data)
 	fmt.Printf("Data Size: %d\n", len(q.Data))
-	if len(q.Data) > 0 {
-		for _, d := range q.Data {
-			data <- d
-		}
-	}
-	wg.Done()
-	if q.Reps == 0 {
-		fmt.Println("Arquivo 0")
-		*finish = true
-	}
+	dados.Lock()
+	dados.m[int(q.Reps)] = q.Data
+	dados.Unlock()
 }
 
 func writeToFile(data chan byte, done chan bool) {
