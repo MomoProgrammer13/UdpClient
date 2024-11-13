@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/gob"
 	"fmt"
@@ -33,33 +34,39 @@ func main() {
 		log.Fatal(err)
 	}
 
-	file, errorFile := os.Create(`C:\Users\gfanha\Documents\testeUDP\` + "excelPlantonistas.xlsx")
-	if errorFile != nil {
-		log.Fatal(errorFile)
-	}
-	defer file.Close()
+	//file, errorFile := os.Create(`C:\Users\gfanha\Documents\testeUDP\` + "excelPlantonistas.xlsx")
+	//if errorFile != nil {
+	//	log.Fatal(errorFile)
+	//}
+	//defer file.Close()
 
 	conn, err := net.DialUDP(TYPE, nil, udpServer)
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	defer conn.Close()
 
 	_, err = conn.Write(request)
-
-	data := make(chan byte)
-	done := make(chan bool)
-	wg := sync.WaitGroup{}
-	var finish bool = false
-	for !finish {
-		received := make([]byte, 1024)
-		_, _, err = conn.ReadFromUDP(received)
-		if err != nil {
-			log.Fatal(err)
-		}
-		wg.Add(1)
-		go handleIncomingResponse(received, data, &wg, &finish)
+	response, err := bufio.NewReaderSize(conn, 1024).ReadBytes()
+	if err != nil {
+		log.Fatal(err)
 	}
+	fmt.Println(string(response))
+	//data := make(chan byte)
+	//done := make(chan bool)
+	//wg := sync.WaitGroup{}
+	//var finish bool = false
+
+	//for !finish {
+	//	received := make([]byte, 1024)
+	//	_, _, err = conn.ReadFromUDP(received)
+	//	if err != nil {
+	//		log.Fatal(err)
+	//	}
+	//	wg.Add(1)
+	//	go handleIncomingResponse(received, data, &wg, &finish)
+	//}
 	//if len(received) > 0 {
 	//	errorDec := dec.Decode(&q)
 	//	if errorDec != nil {
@@ -75,17 +82,17 @@ func main() {
 	//	}
 	//
 	//}
-	go writeToFile(data, done)
-	go func() {
-		wg.Wait()
-		close(data)
-	}()
-	d := <-done
-	if d {
-		fmt.Println("File written successfully")
-	} else {
-		fmt.Println("File not written")
-	}
+	//go writeToFile(data, done)
+	//go func() {
+	//	wg.Wait()
+	//	close(data)
+	//}()
+	//d := <-done
+	//if d {
+	//	fmt.Println("File written successfully")
+	//} else {
+	//	fmt.Println("File not written")
+	//}
 }
 func AppendFile() {
 	file, err := os.OpenFile(`C:\Users\gfanha\Documents\testeUDP\`+"Escala-Controle-Julho (11).xls", os.O_WRONLY|os.O_APPEND, 0644)
