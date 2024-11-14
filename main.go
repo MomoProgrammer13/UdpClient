@@ -1,16 +1,12 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/gob"
 	"fmt"
 	"log"
 	"net"
 	"os"
-	"regexp"
-	"sort"
-	"strconv"
 	"sync"
 )
 
@@ -20,28 +16,53 @@ const (
 	TYPE = "udp"
 )
 
-type MetaData struct {
+type ResponseMetaData struct {
 	Name     string
 	FileSize int64
-	Reps     int32
+	Reps     uint32
 	Data     []byte
+}
+
+type RequestMetaData struct {
+	Name string
+	Reps uint32
+	Miss bool
+}
+
+type Packet struct {
+	Reps uint32
+	Data []byte
+}
+
+type mutexMapData struct {
+	sync.RWMutex
+	m map[int][]byte
+}
+
+func (meta RequestMetaData) RequestMetaDataToBytes() []byte {
+	var metaBytes bytes.Buffer
+	enc := gob.NewEncoder(&metaBytes)
+
+	err := enc.Encode(meta)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return metaBytes.Bytes()
 }
 
 func main() {
 	request := make([]byte, 1024)
 
-	request = []byte("Hello from client")
+	request = RequestMetaData{
+		Name: "img_banco.jpg",
+		Reps: 0,
+		Miss: false,
+	}.RequestMetaDataToBytes()
 
 	udpServer, err := net.ResolveUDPAddr(TYPE, HOST+":"+PORT)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	//file, errorFile := os.Create(`C:\Users\gfanha\Documents\testeUDP\` + "excelPlantonistas.xlsx")
-	//if errorFile != nil {
-	//	log.Fatal(errorFile)
-	//}
-	//defer file.Close()
 
 	conn, err := net.DialUDP(TYPE, nil, udpServer)
 	if err != nil {
@@ -50,31 +71,37 @@ func main() {
 
 	_, err = conn.Write(request)
 
-	response, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
+	infoBuffer := make([]byte, 1024)
+	_, _, errBuffer := conn.ReadFromUDP(infoBuffer)
+	if errBuffer != nil {
 		log.Fatal(err)
 	}
 
-	//Make a regex to only get numeric values and save to variable
-	re := regexp.MustCompile(`\d+`)
-	numericValues := re.FindAllString(response, -1)
-
-	// Print the numeric values
-
-	tamanho, err := strconv.Atoi(numericValues[0])
-	if err != nil {
-		log.Fatal(err)
+	infoDecode := gob.NewDecoder(bytes.NewReader(infoBuffer))
+	var infoData ResponseMetaData
+	errorDecode := infoDecode.Decode(&infoData)
+	if errorDecode != nil {
+		log.Fatal(errorDecode)
 	}
-	var dados = struct {
-		sync.RWMutex
-		m map[int][]byte
-	}{m: make(map[int][]byte)}
 
-	fmt.Println(tamanho)
+	dados := mutexMapData{m: make(map[int][]byte)}
+
+	fmt.Println(infoData.Reps)
 	wg := sync.WaitGroup{}
 
-	for i := 0; i < tamanho; i++ {
-		fmt.Println("Valor de i: ", i)
+	for i := uint32(0); i <= infoData.Reps; i++ {
+
+		if i != 0 && i%10 == 0 {
+			request = RequestMetaData{
+				Name: "img_banco.jpg",
+				Reps: i * 10,
+				Miss: false,
+			}.RequestMetaDataToBytes()
+			_, err = conn.Write(request)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
 		received := make([]byte, 1024)
 		_, _, err = conn.ReadFromUDP(received)
 		if err != nil {
@@ -83,46 +110,27 @@ func main() {
 		wg.Add(1)
 		go handleIncomingResponse(received, &wg, &dados)
 	}
-
 	wg.Wait()
-
-	dados.RLock()
-	fmt.Println("Printando o map de dados")
-	keys := make([]int, 0, len(dados.m))
-	for k := range dados.m {
-		keys = append(keys, k)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(keys)))
-	for _, i := range keys {
-		fmt.Print(string(dados.m[i]))
-	}
-	dados.RUnlock()
-	//if len(received) > 0 {
-	//	errorDec := dec.Decode(&q)
-	//	if errorDec != nil {
-	//		log.Fatal(errorDec)
-	//	}
-	//	_, err2 := file.WriteAt(q.Data, int64(i*900))
-	//	if err2 != nil {
-	//		return
-	//	}
-	//	fmt.Println(q)
-	//	if q.Reps == 0 {
-	//		break
-	//	}
-	//
+	//f, err := os.Create(`ordenacao.txt`)
+	//if err != nil {
+	//	log.Fatal(err)
 	//}
-	//go writeToFile(data, done)
-	//go func() {
-	//	wg.Wait()
-	//	close(data)
-	//}()
-	//d := <-done
-	//if d {
-	//	fmt.Println("File written successfully")
-	//} else {
-	//	fmt.Println("File not written")
+	//defer f.Close()
+	//dados.RLock()
+	//fmt.Println("Printando o map de dados")
+	//keys := make([]int, 0, len(dados.m))
+	//for k := range dados.m {
+	//	keys = append(keys, k)
 	//}
+	//fmt.Println("Tamanho da Keys ", len(keys))
+	//sort.Sort(sort.Reverse(sort.IntSlice(keys)))
+	//for _, i := range keys {
+	//	_, err = f.Write(dados.m[i])
+	//	if err != nil {
+	//		log.Fatal(err)
+	//	}
+	//}
+	//dados.RUnlock()
 }
 func AppendFile() {
 	file, err := os.OpenFile(`C:\Users\gfanha\Documents\testeUDP\`+"Escala-Controle-Julho (11).xls", os.O_WRONLY|os.O_APPEND, 0644)
@@ -139,19 +147,16 @@ func AppendFile() {
 	fmt.Printf("\nFile Name: %s", file.Name())
 }
 
-func handleIncomingResponse(buffer []byte, wg *sync.WaitGroup, dados *struct {
-	sync.RWMutex
-	m map[int][]byte
-}) {
+func handleIncomingResponse(buffer []byte, wg *sync.WaitGroup, dados *mutexMapData) {
 	defer wg.Done()
 	dec := gob.NewDecoder(bytes.NewReader(buffer))
-	var q MetaData
+	var q Packet
 	errorDec := dec.Decode(&q)
 	if errorDec != nil {
 		log.Fatal(errorDec)
 	}
-	fmt.Printf("FileName: %v - Part: %d\n  Data = %v\n", q, q.Name, q.Reps, q.Data)
-	fmt.Printf("Data Size: %d\n", len(q.Data))
+
+	fmt.Printf("Part %d -  Data Size: %d\n", q.Reps, len(q.Data))
 	dados.Lock()
 	dados.m[int(q.Reps)] = q.Data
 	dados.Unlock()
